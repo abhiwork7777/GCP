@@ -1,0 +1,6 @@
+project_id         = "idp-project-deploy-455506"
+region             = "us-central1"
+zone               = "us-central1-a"
+//machine_type       = "e2-micro"
+//vm_name            = "my-vm-name"
+service_account_email = "secret@idp-project-deploy-455506.iam.gserviceaccount.com"

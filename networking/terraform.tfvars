@@ -1,0 +1,5 @@
+project_id   = "idp-project-deploy-455506"
+//region       = "us-east1"
+//vpc_name     = "my-custom-vpc"
+//subnet_name  = "my-custom-subnet"
+subnet_cidr  = "10.1.0.0/24"

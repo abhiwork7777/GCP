@@ -1,0 +1,79 @@
+pipeline {
+    agent any
+    parameters {
+        string(name: 'CLUSTER_NAME', defaultValue: 'first-cluster', description: 'Name of the Cluster')
+        string(name: 'NODE_POOL_NAME', defaultValue: 'first-node-pool', description: 'Name of the Node Pool')
+        string(name: 'NODE_POOL_SIZE', defaultValue: '1', description: 'Size of the Node Pool')
+    }
+    environment {
+        GOOGLE_PROJECT_ID = 'react-idp-app'
+        GOOGLE_COMPUTE_ZONE = 'us-central1'
+    }
+    stages {
+        stage('Checkout SCM') {
+            steps {
+                script {
+                    checkout([$class: 'GitSCM', 
+                        branches: [[name: '*/gke_standard']], 
+                        userRemoteConfigs: [[
+                            url: 'http://git.intelliswift.com/DevOps_Internal/DevopsInternal_Project.git',
+                            credentialsId: 'gitlab-jenkins'
+                        ]]
+                    ])
+                }
+            }
+        }
+        stage('Initializing Terraform') {
+            steps {
+                dir('modules') { // Change to the directory containing Terraform files
+                    script {
+                        withCredentials([file(credentialsId: 'gcp-service-account-key', variable: 'GOOGLE_CREDENTIALS')]) {
+                            withEnv(["GOOGLE_APPLICATION_CREDENTIALS=${env.GOOGLE_CREDENTIALS}"]) {
+                                sh 'terraform init -reconfigure'
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        stage('Validating Terraform') {
+            steps {
+                dir('modules') { // Change to the directory containing Terraform files
+                    script {
+                        withCredentials([file(credentialsId: 'gcp-service-account-key', variable: 'GOOGLE_CREDENTIALS')]) {
+                            withEnv(["GOOGLE_APPLICATION_CREDENTIALS=${env.GOOGLE_CREDENTIALS}"]) {
+                                sh 'terraform validate'
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        stage('Plan the Infrastructure') {
+            steps {
+                dir('modules') { // Change to the directory containing Terraform files
+                    script {
+                        withCredentials([file(credentialsId: 'gcp-service-account-key', variable: 'GOOGLE_CREDENTIALS')]) {
+                            withEnv(["GOOGLE_APPLICATION_CREDENTIALS=${env.GOOGLE_CREDENTIALS}"]) {
+                                sh "terraform plan -var=\"cluster_name=${params.CLUSTER_NAME}\" -var=\"node_pool_name=${params.NODE_POOL_NAME}\" -var=\"node_pool_size=${params.NODE_POOL_SIZE}\""
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        stage('Apply the Infrastructure') {
+            steps {
+                dir('modules') { // Change to the directory containing Terraform files
+                    script {
+                        withCredentials([file(credentialsId: 'gcp-service-account-key', variable: 'GOOGLE_CREDENTIALS')]) {
+                            withEnv(["GOOGLE_APPLICATION_CREDENTIALS=${env.GOOGLE_CREDENTIALS}"]) {
+                                sh "terraform apply -auto-approve -var=\"cluster_name=${params.CLUSTER_NAME}\" -var=\"node_pool_name=${params.NODE_POOL_NAME}\" -var=\"node_pool_size=${params.NODE_POOL_SIZE}\""
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,151 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'GOOGLE_PROJECT_ID', defaultValue: 'idp-project-deploy', description: 'Google Project ID')
+        string(name: 'CLUSTER_NAME', defaultValue: 'first-cluster', description: 'Name of the Cluster')
+        string(name: 'REGION', defaultValue: 'us-central1-a', description: 'Region')
+        string(name: 'GIT_BRANCH', defaultValue: 'idp_infra', description: 'Git Branch to checkout')
+        string(name: 'GIT_URL', defaultValue: 'http://git.intelliswift.com/DevOps_Internal/DevopsInternal_Project.git', description: 'Git Repository URL')
+    }
+
+    stages {
+        stage("Checkout") {
+            steps {
+                // Checkout the code from the Git repository
+                git url: "${params.GIT_URL}", branch: "${params.GIT_BRANCH}", credentialsId: 'gitlab-jenkins'
+            }
+        }
+
+        stage('Setup') {
+            steps {
+                script {
+                    // Verify gcloud installation
+                    sh "gcloud version"
+                }
+            }
+        }
+
+        stage('Authenticate and Test') {
+            steps {
+                withCredentials([file(credentialsId: 'gcp-service-account-key', variable: 'KEY_FILE_PATH')]) {
+                    script {
+                        // Authenticate with the service account and check gcloud version
+                        sh '''
+                        gcloud auth activate-service-account --key-file="$KEY_FILE_PATH"
+                        gcloud version
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Configure Docker Auth') {
+            steps {
+                script {
+                    // Configure Docker to authenticate with GCR
+                    sh 'gcloud auth configure-docker us-central1-docker.pkg.dev'
+                }
+            }
+        }
+
+        stage('Check gke-gcloud-auth-plugin') {
+            steps {
+                script {
+                    // Check if gke-gcloud-auth-plugin is installed
+                    sh '''
+                    if which gke-gcloud-auth-plugin > /dev/null; then
+                        echo "gke-gcloud-auth-plugin is installed"
+                    else
+                        echo "gke-gcloud-auth-plugin is not installed"
+                        exit 1
+                    fi
+                    '''
+                }
+            }
+        }
+
+        stage('Configure Kubernetes Credentials') {
+            steps {
+                script {
+                    // Configure Kubernetes credentials
+                    sh '''
+                    gcloud container clusters get-credentials ${CLUSTER_NAME} --zone ${REGION} --project ${GOOGLE_PROJECT_ID}
+                    '''
+                }
+            }
+        }
+
+        stage('Pull Docker Image') {
+            steps {
+                script {
+                    // Pull the Docker image from GCR
+                    sh '''
+                    docker pull us-central1-docker.pkg.dev/idp-project-deploy/abhishekkumar1402/node-app:latest
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy Node Application') {
+            steps {
+                script {
+                    sh 'echo Deploying node application'
+                    sh 'kubectl apply -f deployment.yaml'
+                }
+            }
+        }
+
+        stage('Check the Service') {
+            steps {
+                script {
+                    sh 'echo Checking the service'
+                    sh 'kubectl get services todo-service'
+                }
+            }
+        }
+
+        stage('Waiting for the server IP') {
+            steps {
+                script {
+                    def maxRetries = 60 // Maximum number of retries (one per minute for up to 1 hour)
+                    def retryInterval = 60 // Retry interval in seconds (1 minute)
+
+                    echo "Checking the service and waiting for external IP to be assigned..."
+
+                    def externalIP = ""
+                    def retries = 0
+
+                    while (retries < maxRetries) {
+                        // Check the service status and external IP
+                        externalIP = sh(script: 'kubectl get services todo-service -o jsonpath="{.status.loadBalancer.ingress[0].ip}"', returnStdout: true).trim()
+
+                        if (externalIP) {
+                            echo "Node application is deploy on that ip address: ${externalIP}:80"
+                            break
+                        } else {
+                            echo "External IP not assigned yet. Checking again in ${retryInterval} seconds..."
+                            sleep retryInterval
+                            retries++
+                        }
+                    }
+
+                    // If the external IP was not assigned within the allowed time
+                    if (!externalIP) {
+                        error "Failed to get external IP for the service after ${retries * retryInterval} seconds."
+                    }
+                }
+            }
+        }
+
+        stage('Get Kubernetes pods') {
+            steps {
+                script {
+                    sh 'echo Getting Kubernetes pods'
+                    sh 'kubectl get pod -o wide'
+                }
+            }
+        }
+
+    }
+}

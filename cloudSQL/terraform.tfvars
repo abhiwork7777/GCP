@@ -1,0 +1,6 @@
+project_id     = "idp-project-deploy-455506"
+//region        = "us-central1"
+//instance_name = "my-sql-instance"
+//db_name       = "my-database"
+db_user       = "admin"
+db_password   = "StrongPassword123!"

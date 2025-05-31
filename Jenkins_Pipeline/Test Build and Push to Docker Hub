@@ -1,0 +1,121 @@
+pipeline {
+    agent any
+    
+    parameters {
+        string(name: 'GOOGLE_PROJECT_ID', defaultValue: 'idp-project-deploy', description: 'Google Project ID')
+        string(name: 'CLUSTER_NAME', defaultValue: 'first-cluster', description: 'Name of the Cluster')
+        string(name: 'REGION', defaultValue: 'us-central1', description: 'Region')
+        string(name: 'GIT_BRANCH', defaultValue: 'idp_infra', description: 'Git Branch to checkout')
+        string(name: 'GIT_URL', defaultValue: 'http://git.intelliswift.com/DevOps_Internal/DevopsInternal_Project.git', description: 'Git Repository URL')
+    }
+
+    environment {
+        SONARQUBE_SERVER = 'SonarQubeServerName' // Replace with your actual SonarQube server name
+        SONARQUBE_TOKEN = credentials('SonarQube-token') // Using Jenkins credentials for SonarQube token
+    }
+
+    stages {
+        stage("Checkout") {
+           steps {
+              // Checkout the code from the Git repository
+             git url: "${params.GIT_URL}", branch: "${params.GIT_BRANCH}", credentialsId: 'gitlab-jenkins'
+         }
+          }
+
+       
+        stage('SonarQube Analysis') {
+            steps {
+                // Run SonarQube analysis
+                nodejs(nodeJSInstallationName: 'nodejs') {
+                    withSonarQubeEnv(SONARQUBE_SERVER) {
+                        sh 'npm install sonar-scanner --save-dev'  // Using 'sh' for Unix shell
+                        sh '''
+                        npx sonar-scanner \
+                            -Dsonar.projectKey=node-todo-app \
+                            -Dsonar.projectName="Node application" \
+                            -Dsonar.projectVersion=1.0.0 \
+                            -Dsonar.projectDescription="This project demonstrates a simple node js." \
+                            -Dsonar.sources=./ \
+                            -Dsonar.language=js \
+                            -Dsonar.sourceEncoding=UTF-8 \
+                            -Dsonar.login=$SONARQUBE_TOKEN
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                script {
+                    try {
+                        echo "Waiting for SonarQube quality gate..."
+                        timeout(time: 10, unit: 'MINUTES') {
+                            waitForQualityGate abortPipeline: true
+                        }
+                        echo "Quality gate passed successfully."
+                    } catch (Exception e) {
+                        echo "Quality gate check failed or timed out: ${e.message}"
+                        error "Quality Gate check failed or timed out: ${e.message}"
+                    }
+                }
+            }
+        }
+
+        stage("Build Docker Image") {
+            steps {
+                script {
+                    try {
+                        // Log into Docker Hub using personal access token
+                        withCredentials([string(credentialsId: 'docker-access-token', variable: 'DOCKER_ACCESS_TOKEN')]) {
+                            sh 'echo $DOCKER_ACCESS_TOKEN | docker login -u abhishekkumar1402 --password-stdin'
+                        }
+
+                        // Build Docker image
+                        sh 'docker build -t abhishekkumar1402/node-app .'
+                    } catch (Exception e) {
+                        error "Failed to build Docker image: ${e.message}"
+                    }
+                }
+            }
+        }
+
+        stage("Push to Artifact Registry") {
+            steps {
+                script {
+                    def repoName = "abhishekkumar1402"  // Define the repository name here
+
+                    try {
+                        // Authenticate with GCR or Artifact Registry
+                        withCredentials([file(credentialsId: 'gcp-service-account-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS')]) {
+                            sh '''
+                            gcloud auth activate-service-account --key-file="${GOOGLE_APPLICATION_CREDENTIALS}"
+                            gcloud config set project ${GOOGLE_PROJECT_ID}
+                            gcloud auth configure-docker us-central1-docker.pkg.dev
+                            '''
+                        }
+
+                        // Create Artifact Registry repository if it doesn't exist
+                        sh """
+                        if ! gcloud artifacts repositories describe ${repoName} --location=us-central1; then
+                            gcloud artifacts repositories create ${repoName} \
+                                --repository-format=docker \
+                                --location=us-central1 \
+                                --description="Docker repository"
+                        fi
+                        """
+
+                        // Tag the Docker image for Artifact Registry
+                        def imageTag = "us-central1-docker.pkg.dev/${env.GOOGLE_PROJECT_ID}/${repoName}/node-app:latest"
+                        sh "docker tag abhishekkumar1402/node-app ${imageTag}"
+
+                        // Push Docker image to Artifact Registry
+                        sh "docker push ${imageTag}"
+                    } catch (Exception e) {
+                        error "Failed to push Docker image to Artifact Registry: ${e.message}. Ensure that the repository exists and the service account has the correct permissions."
+                    }
+                }
+            }
+        }
+    }
+}

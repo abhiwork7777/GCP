@@ -1,0 +1,35 @@
+stages:
+  - terraform
+
+variables:
+  TF_ROOT: "."
+  GOOGLE_APPLICATION_CREDENTIALS: "/tmp/gcp-key.json"
+
+before_script:
+  - echo "$GCP_SERVICE_ACCOUNT_KEY" > $GOOGLE_APPLICATION_CREDENTIALS
+  - terraform -version
+
+terraform-init:
+  stage: terraform
+  script:
+    - cd $TF_ROOT
+    - terraform init
+
+terraform-validate:
+  stage: terraform
+  script:
+    - cd $TF_ROOT
+    - terraform validate
+
+terraform-plan:
+  stage: terraform
+  script:
+    - cd $TF_ROOT
+    - terraform plan -var="project_id=$GCP_PROJECT_ID" -var="bucket_name=$GCS_BUCKET_NAME"
+
+terraform-apply:
+  stage: terraform
+  when: manual
+  script:
+    - cd $TF_ROOT
+    - terraform apply -auto-approve -var="project_id=$GCP_PROJECT_ID" -var="bucket_name=$GCS_BUCKET_NAME"
